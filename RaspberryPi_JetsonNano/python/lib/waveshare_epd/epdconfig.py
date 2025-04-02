@@ -103,6 +103,10 @@ class KhadasVIM3(Khadas):
     def __init__(self):
         super().__init__(rst=462, dc=461, cs=460, busy=464, pwr=496, spi_bus=2)
 
+class KhadasVIM1S(Khadas):
+    def __init__(self):
+        super().__init__(rst=456, dc=457, cs=470, busy=509, pwr=502, spi_bus=1)
+
 class RaspberryPi:
     # Pin definition
     RST_PIN  = 17
@@ -374,6 +378,8 @@ def get_khadas_model():
                 return KhadasVIM4()
             elif "VIM3" in model:
                 return KhadasVIM3()
+            elif "VIM1S" in model:
+                return KhadasVIM1S()
     return None
 
 if sys.version_info[0] == 2:
