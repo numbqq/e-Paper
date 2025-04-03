@@ -32,11 +32,80 @@ import logging
 import sys
 import time
 import subprocess
+import spidev
 
 from ctypes import *
 
 logger = logging.getLogger(__name__)
 
+class Khadas:
+    def __init__(self, rst, dc, cs, busy, pwr, spi_bus):
+        self.RST_PIN = rst
+        self.DC_PIN = dc
+        self.CS_PIN = cs
+        self.BUSY_PIN = busy
+        self.PWR_PIN = pwr
+        self.spi_bus = spi_bus
+        self.SPI = spidev.SpiDev()
+
+        self.gpio_init(self.RST_PIN)
+        self.gpio_init(self.DC_PIN)
+        self.gpio_init(self.CS_PIN)
+        self.gpio_init(self.BUSY_PIN)
+        self.gpio_init(self.PWR_PIN)
+
+    def gpio_init(self, pin):
+        if not os.path.exists(f"/sys/class/gpio/gpio{pin}"):
+            os.system(f"echo {pin} | sudo tee /sys/class/gpio/export")
+            time.sleep(0.1)
+
+        direction = "in" if pin == self.BUSY_PIN else "out"
+        os.system(f"echo {direction} | sudo tee /sys/class/gpio/gpio{pin}/direction")
+
+    def digital_write(self, pin, value):
+        with open(f"/sys/class/gpio/gpio{pin}/value", "w") as f:
+            f.write("1" if value else "0")
+
+    def digital_read(self, pin):
+        with open(f"/sys/class/gpio/gpio{pin}/value", "r") as f:
+            return int(f.read().strip())
+
+    def delay_ms(self, delaytime):
+        time.sleep(delaytime / 1000.0)
+
+    def spi_writebyte(self, data):
+        self.SPI.writebytes(data)
+
+    def spi_writebyte2(self, data):
+        self.SPI.writebytes2(data)
+
+    def module_init(self):
+        if self.spi_bus == 2:
+            self.SPI.open(2, 1)
+        else:
+            self.SPI.open(1, 0)
+        self.SPI.max_speed_hz = 4000000
+        self.SPI.mode = 0b00
+        return 0
+
+    def module_exit(self):
+        self.SPI.close()
+        for pin in [self.RST_PIN, self.DC_PIN, self.BUSY_PIN, self.PWR_PIN]:
+            os.system(f"echo {pin} | sudo tee /sys/class/gpio/unexport")
+
+
+class KhadasVIM4(Khadas):
+    def __init__(self):
+        super().__init__(rst=420, dc=491, cs=502, busy=492, pwr=450, spi_bus=1)
+
+
+class KhadasVIM3(Khadas):
+    def __init__(self):
+        super().__init__(rst=462, dc=461, cs=460, busy=464, pwr=496, spi_bus=2)
+
+class KhadasVIM1S(Khadas):
+    def __init__(self):
+        super().__init__(rst=456, dc=457, cs=470, busy=509, pwr=502, spi_bus=1)
 
 class RaspberryPi:
     # Pin definition
@@ -300,6 +369,18 @@ class SunriseX3:
 
         self.GPIO.cleanup([self.RST_PIN, self.DC_PIN, self.CS_PIN, self.BUSY_PIN], self.PWR_PIN)
 
+def get_khadas_model():
+    model_path = "/proc/device-tree/model"
+    if os.path.exists(model_path):
+        with open(model_path, "r") as f:
+            model = f.read().strip()
+            if "VIM4" in model:
+                return KhadasVIM4()
+            elif "VIM3" in model:
+                return KhadasVIM3()
+            elif "VIM1S" in model:
+                return KhadasVIM1S()
+    return None
 
 if sys.version_info[0] == 2:
     process = subprocess.Popen("cat /proc/cpuinfo | grep Raspberry", shell=True, stdout=subprocess.PIPE)
@@ -314,7 +395,11 @@ if "Raspberry" in output:
 elif os.path.exists('/sys/bus/platform/drivers/gpio-x3'):
     implementation = SunriseX3()
 else:
-    implementation = JetsonNano()
+    khadas_board = get_khadas_model()
+    if khadas_board:
+        implementation = khadas_board
+    else:
+        implementation = JetsonNano()
 
 for func in [x for x in dir(implementation) if not x.startswith('_')]:
     setattr(sys.modules[__name__], func, getattr(implementation, func))
